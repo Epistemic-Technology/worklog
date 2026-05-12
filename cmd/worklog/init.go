@@ -47,6 +47,10 @@ project: %s
 
 # author: yourname            # overrides gh login / OS user
 #
+# author_aliases:             # unify attribution across event kinds
+#   mikethicke: Mike Thicke   # e.g. map OS user to git commit name
+#   mike@example.com: Mike Thicke
+#
 # git:
 #   skip_merges: true
 #   skip_authors: ["dependabot[bot]", "renovate[bot]"]

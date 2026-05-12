@@ -49,11 +49,17 @@ type Reviews struct {
 type Config struct {
 	Project    string     `yaml:"project"`
 	Author     string     `yaml:"author,omitempty"`
-	Git        Git        `yaml:"git"`
-	ClaudeCode ClaudeCode `yaml:"claude_code"`
-	Agents     Agents     `yaml:"agents"`
-	Summarizer Summarizer `yaml:"summarizer"`
-	Reviews    Reviews    `yaml:"reviews"`
+	// AuthorAliases maps any author identifier (a git name, a git
+	// email, an OS username, a GitHub login) to its canonical
+	// attribution. Used to collapse "mikethicke" (Claude session,
+	// OS user) and "Mike Thicke" (git commit author) into a single
+	// person across event kinds.
+	AuthorAliases map[string]string `yaml:"author_aliases,omitempty"`
+	Git           Git               `yaml:"git"`
+	ClaudeCode    ClaudeCode        `yaml:"claude_code"`
+	Agents        Agents            `yaml:"agents"`
+	Summarizer    Summarizer        `yaml:"summarizer"`
+	Reviews       Reviews           `yaml:"reviews"`
 }
 
 // Default returns the config that ships with a new project.
@@ -128,16 +134,43 @@ func WorklogDir(root string) string {
 // ResolveAuthor returns the attribution to record on notes and
 // agent-session events. Precedence: explicit `author:` in config →
 // GitHub username (via `gh api user`, if installed and authed) →
-// OS user. Returns "" only if every source is empty, which would
-// be a very unusual environment.
+// OS user. The result is run through Canonicalize so attribution
+// stays unified across event kinds. Returns "" only if every
+// source is empty, which would be a very unusual environment.
 func (c Config) ResolveAuthor() string {
 	if s := strings.TrimSpace(c.Author); s != "" {
-		return s
+		return c.Canonicalize(s)
 	}
 	if s := githubUser(); s != "" {
-		return s
+		return c.Canonicalize(s)
 	}
-	return osUser()
+	return c.Canonicalize(osUser())
+}
+
+// Canonicalize maps any of the given identifiers (typically a git
+// author name and email, or a single resolved username) through
+// AuthorAliases. The first candidate that matches an alias key
+// yields its canonical value; otherwise the first non-empty
+// candidate is returned unchanged. Matching is case-insensitive
+// so a single alias covers "mikethicke" and "MikeThicke" alike.
+func (c Config) Canonicalize(candidates ...string) string {
+	for _, cand := range candidates {
+		key := strings.TrimSpace(cand)
+		if key == "" {
+			continue
+		}
+		for k, v := range c.AuthorAliases {
+			if strings.EqualFold(strings.TrimSpace(k), key) && v != "" {
+				return v
+			}
+		}
+	}
+	for _, cand := range candidates {
+		if s := strings.TrimSpace(cand); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func githubUser() string {

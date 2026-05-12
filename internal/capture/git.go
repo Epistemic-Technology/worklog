@@ -114,7 +114,7 @@ func CaptureCommit(ctx context.Context, root string, cfg config.Config, sum *sum
 	fm := event.Frontmatter{
 		Time:    info.Time,
 		Kind:    event.KindCommit,
-		Author:  info.AuthorName,
+		Author:  cfg.Canonicalize(info.AuthorName, info.AuthorEmail),
 		Refs:    []string{"git:" + info.SHA},
 		Summary: summary,
 	}

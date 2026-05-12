@@ -176,6 +176,15 @@ project: webapp
 # back to your OS user. Setting this trumps both.
 author: alice
 
+# Map any author identifier (git name, git email, OS user, GitHub
+# login) to a single canonical name. Without this, the same person
+# appears as "Alice Smith" on commits and "alice" on Claude sessions.
+# Matching is case-insensitive. Best kept in the global config since
+# the mapping is per-person, not per-project.
+author_aliases:
+  alice: Alice Smith
+  alice@example.com: Alice Smith
+
 git:
   skip_merges: true
   skip_authors: ["dependabot[bot]", "renovate[bot]"]

@@ -224,6 +224,8 @@ reviews:
 
 A global config at `~/.config/worklog/config.yml` sets per-user defaults (API key path, summarizer model, attribution, etc.) that apply across every repo. The per-repo `.worklog/config.yml` overrides those defaults for that project. Built-in defaults fill in anything neither file specifies.
 
+`author_aliases` is a map from any author identifier (git name, git email, OS user, GitHub login) to a canonical name. It collapses the same person across event kinds — without it, commits attributed to `Alice Smith` and Claude sessions captured as `alice` look like two different people in renders. Matching is case-insensitive. Best kept in the global config since the mapping is per-person, not per-project.
+
 ## Concurrency and merges
 
 The per-event-file design means capture is conflict-free by construction. Two collaborators committing event files in parallel produce different paths; git merges them without thinking. Two `worklog note` invocations at the same instant get different timestamps and a random suffix.
