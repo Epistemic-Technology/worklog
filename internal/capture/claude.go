@@ -119,8 +119,17 @@ func captureClaudeFromTranscript(ctx context.Context, root string, cfg config.Co
 		short = short[:8]
 	}
 	path := event.Path(config.WorklogDir(root), info.StartTime, "cc", short)
-	if event.Exists(path) {
-		return "", nil
+	if existing, err := event.Read(path); err == nil {
+		// Existing capture already reflects the full transcript — skip.
+		// We compare in-content end times rather than file mtimes
+		// because Claude Code can touch the jsonl during shutdown
+		// after the hook has already written the event, which would
+		// otherwise force pointless re-summarization on every sync.
+		// Events written by an older binary have no EndTime; those
+		// get rewritten once to populate the field, then stabilize.
+		if !existing.EndTime.IsZero() && existing.EndTime.Equal(info.EndTime) {
+			return "", nil
+		}
 	}
 	summary, body := sum.Session(ctx, info.FirstPrompt, info.Excerpt, info.FilesTouched)
 	if summary == "" {
@@ -128,13 +137,14 @@ func captureClaudeFromTranscript(ctx context.Context, root string, cfg config.Co
 	}
 	fm := event.Frontmatter{
 		Time:      info.StartTime,
+		EndTime:   info.EndTime,
 		Kind:      event.KindClaudeSession,
 		Author:    cfg.ResolveAuthor(),
 		Refs:      []string{"claude:" + sessionID},
 		Summary:   summary,
 		SessionID: sessionID,
 	}
-	if err := event.Write(path, fm, body); err != nil {
+	if err := event.Replace(path, fm, body); err != nil {
 		return "", err
 	}
 	return path, nil

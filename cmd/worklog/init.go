@@ -19,8 +19,19 @@ exit 0
 
 	captureSessionShim = `#!/bin/sh
 # worklog: invoked by Claude Code SessionEnd hook. Forwards stdin JSON
-# to the worklog binary. The worklog repo root is detected via git.
-exec worklog capture-claude
+# to ` + "`worklog capture-claude`" + `. Stdout/stderr are appended to
+# .git/worklog-capture.log so silent hook failures (missing binary on
+# PATH, parse errors, API failures) are debuggable. The log lives
+# under .git/ so it's never committed.
+root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+log="$root/.git/worklog-capture.log"
+{
+  printf '[%s] capture-session start (pid=%s)\n' "$(date -u +%FT%TZ)" "$$"
+  worklog capture-claude
+  rc=$?
+  printf '[%s] capture-session exit=%d\n' "$(date -u +%FT%TZ)" "$rc"
+  exit "$rc"
+} >>"$log" 2>&1
 `
 
 	defaultConfig = `# Per-repo worklog config. Committed and shared with collaborators —

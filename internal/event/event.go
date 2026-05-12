@@ -30,6 +30,7 @@ const (
 // Frontmatter mirrors the YAML block at the top of an event file.
 type Frontmatter struct {
 	Time      time.Time `yaml:"time"`
+	EndTime   time.Time `yaml:"end_time,omitempty"`
 	Kind      string    `yaml:"kind"`
 	Author    string    `yaml:"author,omitempty"`
 	Refs      []string  `yaml:"refs,omitempty"`
@@ -72,8 +73,20 @@ func Exists(path string) bool {
 
 // Write atomically writes an event file. Parent directories are created.
 // Returns os.ErrExist if the target file already exists — capture is
-// expected to short-circuit on Exists before calling Write.
+// expected to short-circuit on Exists before calling Write. Use
+// Replace if the caller intends to overwrite (e.g. updating a partial
+// capture written while a session was still live).
 func Write(path string, fm Frontmatter, body string) error {
+	return writeFile(path, fm, body, false)
+}
+
+// Replace atomically writes an event file, overwriting any existing
+// file at the same path.
+func Replace(path string, fm Frontmatter, body string) error {
+	return writeFile(path, fm, body, true)
+}
+
+func writeFile(path string, fm Frontmatter, body string, overwrite bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -117,10 +130,12 @@ func Write(path string, fm Frontmatter, body string) error {
 		os.Remove(tmpName)
 		return err
 	}
-	// O_EXCL semantics: refuse to clobber an existing event file.
-	if _, err := os.Stat(path); err == nil {
-		os.Remove(tmpName)
-		return os.ErrExist
+	if !overwrite {
+		// O_EXCL semantics: refuse to clobber an existing event file.
+		if _, err := os.Stat(path); err == nil {
+			os.Remove(tmpName)
+			return os.ErrExist
+		}
 	}
 	return os.Rename(tmpName, path)
 }
