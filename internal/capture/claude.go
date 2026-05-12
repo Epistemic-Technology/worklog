@@ -65,7 +65,7 @@ func CaptureClaudeFromPayload(ctx context.Context, root string, cfg config.Confi
 	if p.TranscriptPath == "" {
 		return "", errors.New("capture: missing transcript_path")
 	}
-	return captureClaudeFromTranscript(ctx, root, sum, p.TranscriptPath, p.SessionID)
+	return captureClaudeFromTranscript(ctx, root, cfg, sum, p.TranscriptPath, p.SessionID)
 }
 
 // SyncClaude walks ~/.claude/projects/<encoded-cwd>/ and captures any
@@ -88,7 +88,7 @@ func SyncClaude(ctx context.Context, root string, cfg config.Config, sum *summar
 			continue
 		}
 		sessionID := strings.TrimSuffix(e.Name(), ".jsonl")
-		path, err := captureClaudeFromTranscript(ctx, root, sum, filepath.Join(dir, e.Name()), sessionID)
+		path, err := captureClaudeFromTranscript(ctx, root, cfg, sum, filepath.Join(dir, e.Name()), sessionID)
 		if err != nil {
 			return count, fmt.Errorf("capture session %s: %w", sessionID, err)
 		}
@@ -99,7 +99,7 @@ func SyncClaude(ctx context.Context, root string, cfg config.Config, sum *summar
 	return count, nil
 }
 
-func captureClaudeFromTranscript(ctx context.Context, root string, sum *summarize.Client, transcriptPath, sessionID string) (string, error) {
+func captureClaudeFromTranscript(ctx context.Context, root string, cfg config.Config, sum *summarize.Client, transcriptPath, sessionID string) (string, error) {
 	info, err := parseClaudeTranscript(transcriptPath)
 	if err != nil {
 		return "", err
@@ -129,6 +129,7 @@ func captureClaudeFromTranscript(ctx context.Context, root string, sum *summariz
 	fm := event.Frontmatter{
 		Time:      info.StartTime,
 		Kind:      event.KindClaudeSession,
+		Author:    cfg.ResolveAuthor(),
 		Refs:      []string{"claude:" + sessionID},
 		Summary:   summary,
 		SessionID: sessionID,

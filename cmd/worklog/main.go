@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 
 	"github.com/mikethicke/worklog/internal/capture"
 	"github.com/mikethicke/worklog/internal/config"
+	"github.com/mikethicke/worklog/internal/event"
 	"github.com/mikethicke/worklog/internal/render"
 	"github.com/mikethicke/worklog/internal/summarize"
 )
@@ -44,6 +47,7 @@ func newRoot() *cobra.Command {
 		newShowCmd(),
 		newReviewCmd(),
 		newLsCmd(),
+		newResetCmd(),
 	)
 	return root
 }
@@ -148,6 +152,10 @@ func newNoteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			cfg, err := config.Load(root)
+			if err != nil {
+				return err
+			}
 			var text string
 			if len(args) > 0 {
 				text = strings.Join(args, " ")
@@ -160,13 +168,7 @@ func newNoteCmd() *cobra.Command {
 					return errors.New("note is empty; aborting")
 				}
 			}
-			author := os.Getenv("USER")
-			if name, err := exec.Command("git", "config", "user.name").Output(); err == nil {
-				if s := strings.TrimSpace(string(name)); s != "" {
-					author = s
-				}
-			}
-			path, err := capture.Note(root, text, author)
+			path, err := capture.Note(root, text, cfg.ResolveAuthor())
 			if err != nil {
 				return err
 			}
@@ -275,40 +277,81 @@ func newShowCmd() *cobra.Command {
 
 func newReviewCmd() *cobra.Command {
 	var (
-		month string
-		year  string
-		write bool
+		week       string
+		month      string
+		year       string
+		regenerate bool
 	)
 	cmd := &cobra.Command{
 		Use:   "review",
-		Short: "Generate (and optionally persist) a monthly or yearly review",
+		Short: "Generate (and cache) a weekly, monthly, or yearly review",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, root, cfg, sum, err := loadCtx()
 			if err != nil {
 				return err
 			}
+			opts := render.ReviewOptions{
+				Regenerate: regenerate,
+				Persist:    cfg.Reviews.Persist,
+			}
 			switch {
+			case week != "":
+				t, err := parseISOWeek(week)
+				if err != nil {
+					return fmt.Errorf("--week must be YYYY-Www: %w", err)
+				}
+				return render.ReviewWeekly(ctx, os.Stdout, root, cfg, sum, t, opts)
 			case month != "":
 				t, err := time.Parse("2006-01", month)
 				if err != nil {
 					return fmt.Errorf("--month must be YYYY-MM: %w", err)
 				}
-				return render.ReviewMonthly(ctx, os.Stdout, root, cfg, sum, t, write)
+				return render.ReviewMonthly(ctx, os.Stdout, root, cfg, sum, t, opts)
 			case year != "":
 				t, err := time.Parse("2006", year)
 				if err != nil {
 					return fmt.Errorf("--year must be YYYY: %w", err)
 				}
-				return render.ReviewYearly(ctx, os.Stdout, root, cfg, sum, t, write)
+				return render.ReviewYearly(ctx, os.Stdout, root, cfg, sum, t, opts)
 			default:
-				return errors.New("specify --month YYYY-MM or --year YYYY")
+				return errors.New("specify --week YYYY-Www, --month YYYY-MM, or --year YYYY")
 			}
 		},
 	}
+	cmd.Flags().StringVar(&week, "week", "", "weekly review (YYYY-Www, ISO week)")
 	cmd.Flags().StringVar(&month, "month", "", "monthly review (YYYY-MM)")
 	cmd.Flags().StringVar(&year, "year", "", "yearly review (YYYY)")
-	cmd.Flags().BoolVar(&write, "write", false, "persist to .worklog/reviews/")
+	cmd.Flags().BoolVar(&regenerate, "regenerate", false, "bypass cached review and re-run the summarizer")
 	return cmd
+}
+
+// parseISOWeek parses a YYYY-Www label (e.g. "2026-W19") into a time
+// pointing at the Monday of that ISO week, in the local timezone.
+func parseISOWeek(s string) (time.Time, error) {
+	parts := strings.SplitN(s, "-W", 2)
+	if len(parts) != 2 {
+		return time.Time{}, fmt.Errorf("expected YYYY-Www, got %q", s)
+	}
+	year, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid year: %w", err)
+	}
+	week, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid week: %w", err)
+	}
+	if week < 1 || week > 53 {
+		return time.Time{}, fmt.Errorf("week must be 1-53, got %d", week)
+	}
+	// Jan 4 is always in ISO week 1. Walk back to its Monday, then
+	// step forward by (week-1) weeks.
+	jan4 := time.Date(year, 1, 4, 0, 0, 0, 0, time.Local)
+	wd := int(jan4.Weekday())
+	if wd == 0 {
+		wd = 7
+	}
+	weekOneMonday := jan4.AddDate(0, 0, -(wd - 1))
+	return weekOneMonday.AddDate(0, 0, (week-1)*7), nil
 }
 
 func newLsCmd() *cobra.Command {
@@ -326,6 +369,74 @@ func newLsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&kind, "kind", "", "filter by event kind")
 	return cmd
+}
+
+func newResetCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "reset",
+		Short: "Delete all captured events and reviews (back to post-init state)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root, err := repoRoot()
+			if err != nil {
+				return err
+			}
+			wd := config.WorklogDir(root)
+			shards, reviews, err := resetTargets(wd)
+			if err != nil {
+				return err
+			}
+			if len(shards) == 0 && len(reviews) == 0 {
+				fmt.Fprintln(os.Stderr, "nothing to reset")
+				return nil
+			}
+			if !force {
+				fmt.Fprintf(os.Stderr, "Will delete %d event shard(s) and %d review file(s) under %s.\n", len(shards), len(reviews), wd)
+				fmt.Fprint(os.Stderr, "Continue? [y/N] ")
+				reader := bufio.NewReader(os.Stdin)
+				answer, _ := reader.ReadString('\n')
+				if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(answer)), "y") {
+					return errors.New("aborted")
+				}
+			}
+			for _, p := range shards {
+				if err := os.RemoveAll(p); err != nil {
+					return err
+				}
+			}
+			for _, p := range reviews {
+				if err := os.Remove(p); err != nil {
+					return err
+				}
+			}
+			fmt.Fprintf(os.Stderr, "removed %d shard(s), %d review(s)\n", len(shards), len(reviews))
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "skip confirmation prompt")
+	return cmd
+}
+
+func resetTargets(worklogDir string) (shards, reviews []string, err error) {
+	entries, err := os.ReadDir(worklogDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, e := range entries {
+		if e.IsDir() && event.IsMonthShard(e.Name()) {
+			shards = append(shards, filepath.Join(worklogDir, e.Name()))
+		}
+	}
+	reviewsDir := filepath.Join(worklogDir, "reviews")
+	rentries, rerr := os.ReadDir(reviewsDir)
+	if rerr == nil {
+		for _, e := range rentries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				reviews = append(reviews, filepath.Join(reviewsDir, e.Name()))
+			}
+		}
+	}
+	return shards, reviews, nil
 }
 
 func parseDate(s string) (time.Time, error) {

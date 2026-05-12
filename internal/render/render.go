@@ -85,42 +85,71 @@ func Show(w io.Writer, root string, r Range, opts ShowOptions) error {
 			fmt.Fprintf(w, "\n## %s\n\n", d)
 			day = d
 		}
-		fmt.Fprintf(w, "- %s `%s` %s\n", ev.Time.Format("15:04"), ev.Kind, oneLine(ev.Summary))
+		fmt.Fprintf(w, "- %s `%s` %s%s\n", ev.Time.Format("15:04"), ev.Kind, oneLine(ev.Summary), authorSuffix(ev.Author))
 	}
 	return nil
 }
 
-// ReviewMonthly composes a monthly review markdown body. If write is
-// true, the result is persisted to .worklog/reviews/<period>.md.
-func ReviewMonthly(ctx context.Context, w io.Writer, root string, cfg config.Config, sum *summarize.Client, period time.Time, write bool) error {
-	r := MonthRange(period)
+// ReviewOptions controls cache and persistence behavior for the
+// Review* functions.
+type ReviewOptions struct {
+	// Regenerate forces a fresh LLM pass even if a cached review
+	// exists. The fresh result still respects Persist for writing.
+	Regenerate bool
+	// Persist controls whether generated reviews are written to
+	// .worklog/reviews/ and whether cached files are read back.
+	Persist bool
+}
+
+// ReviewWeekly composes a weekly review markdown body. By default, a
+// cached file at .worklog/reviews/<YYYY-Www>.md is served when
+// present; set opts.Regenerate to bypass it. Output is written to w
+// (with a stderr hint on cache hits).
+func ReviewWeekly(ctx context.Context, w io.Writer, root string, cfg config.Config, sum *summarize.Client, period time.Time, opts ReviewOptions) error {
+	r := WeekRange(period)
+	if cached, ok := serveCachedReview(w, root, r.Label, opts); ok {
+		return cached
+	}
 	events, err := event.List(config.WorklogDir(root), r.From, r.To)
 	if err != nil {
 		return err
 	}
 	lines := make([]string, 0, len(events))
 	for _, ev := range events {
-		lines = append(lines, fmt.Sprintf("%s [%s] %s", ev.Time.Format("2006-01-02"), ev.Kind, oneLine(ev.Summary)))
+		lines = append(lines, fmt.Sprintf("%s [%s]%s %s", ev.Time.Format("2006-01-02"), ev.Kind, authorTag(ev.Author), oneLine(ev.Summary)))
 	}
-	body := sum.MonthlyReview(ctx, r.Label, lines)
-	out := frontmatterBlock(map[string]any{
-		"period":       r.Label,
-		"generated_at": time.Now().UTC().Format(time.RFC3339),
-		"event_count":  len(events),
-	}) + body
-	if _, err := io.WriteString(w, out); err != nil {
+	body := sum.WeeklyReview(ctx, r.Label, lines)
+	return emitReview(w, root, r.Label, body, len(events), opts)
+}
+
+// ReviewMonthly composes a monthly review markdown body. By default,
+// a cached file at .worklog/reviews/<YYYY-MM>.md is served when
+// present; set opts.Regenerate to bypass it.
+func ReviewMonthly(ctx context.Context, w io.Writer, root string, cfg config.Config, sum *summarize.Client, period time.Time, opts ReviewOptions) error {
+	r := MonthRange(period)
+	if cached, ok := serveCachedReview(w, root, r.Label, opts); ok {
+		return cached
+	}
+	events, err := event.List(config.WorklogDir(root), r.From, r.To)
+	if err != nil {
 		return err
 	}
-	if write {
-		return persistReview(root, r.Label, out)
+	lines := make([]string, 0, len(events))
+	for _, ev := range events {
+		lines = append(lines, fmt.Sprintf("%s [%s]%s %s", ev.Time.Format("2006-01-02"), ev.Kind, authorTag(ev.Author), oneLine(ev.Summary)))
 	}
-	return nil
+	body := sum.MonthlyReview(ctx, r.Label, lines)
+	return emitReview(w, root, r.Label, body, len(events), opts)
 }
 
 // ReviewYearly composes a yearly review by reading the twelve monthly
-// review files (or generating them on the fly if missing).
-func ReviewYearly(ctx context.Context, w io.Writer, root string, cfg config.Config, sum *summarize.Client, period time.Time, write bool) error {
+// review files (or generating them on the fly if missing). By
+// default, a cached yearly file is served when present.
+func ReviewYearly(ctx context.Context, w io.Writer, root string, cfg config.Config, sum *summarize.Client, period time.Time, opts ReviewOptions) error {
 	r := YearRange(period)
+	if cached, ok := serveCachedReview(w, root, r.Label, opts); ok {
+		return cached
+	}
 	monthlies := map[string]string{}
 	for m := 0; m < 12; m++ {
 		t := time.Date(period.Year(), time.Month(m+1), 1, 0, 0, 0, 0, period.Location())
@@ -134,15 +163,47 @@ func ReviewYearly(ctx context.Context, w io.Writer, root string, cfg config.Conf
 		}
 	}
 	body := sum.YearlyReview(ctx, r.Label, monthlies)
-	out := frontmatterBlock(map[string]any{
-		"period":       r.Label,
+	return emitReview(w, root, r.Label, body, 0, opts)
+}
+
+// serveCachedReview writes the cached review file for label to w if
+// one exists and the options allow it. Returns (writeError, true)
+// when a cache hit was handled, or (_, false) to indicate the caller
+// should generate the review.
+func serveCachedReview(w io.Writer, root, label string, opts ReviewOptions) (error, bool) {
+	if opts.Regenerate || !opts.Persist {
+		return nil, false
+	}
+	path := filepath.Join(config.WorklogDir(root), "reviews", label+".md")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false
+	}
+	if ts := frontmatterField(string(b), "generated_at"); ts != "" {
+		fmt.Fprintf(os.Stderr, "worklog: serving cached review (generated %s) — pass --regenerate to refresh\n", ts)
+	} else {
+		fmt.Fprintln(os.Stderr, "worklog: serving cached review — pass --regenerate to refresh")
+	}
+	_, werr := w.Write(b)
+	return werr, true
+}
+
+// emitReview writes the (frontmatter + body) to w and, if opts.Persist
+// is true, also persists it to .worklog/reviews/<label>.md.
+func emitReview(w io.Writer, root, label, body string, eventCount int, opts ReviewOptions) error {
+	fm := map[string]any{
+		"period":       label,
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
-	}) + body
+	}
+	if eventCount > 0 {
+		fm["event_count"] = eventCount
+	}
+	out := frontmatterBlock(fm) + body
 	if _, err := io.WriteString(w, out); err != nil {
 		return err
 	}
-	if write {
-		return persistReview(root, r.Label, out)
+	if opts.Persist {
+		return persistReview(root, label, out)
 	}
 	return nil
 }
@@ -164,7 +225,7 @@ func loadOrBuildMonthly(ctx context.Context, root string, cfg config.Config, sum
 	}
 	lines := make([]string, 0, len(events))
 	for _, ev := range events {
-		lines = append(lines, fmt.Sprintf("%s [%s] %s", ev.Time.Format("2006-01-02"), ev.Kind, oneLine(ev.Summary)))
+		lines = append(lines, fmt.Sprintf("%s [%s]%s %s", ev.Time.Format("2006-01-02"), ev.Kind, authorTag(ev.Author), oneLine(ev.Summary)))
 	}
 	return sum.MonthlyReview(ctx, label, lines), nil
 }
@@ -230,7 +291,11 @@ func ListEvents(w io.Writer, root, kind string) error {
 		if kind != "" && ev.Kind != kind {
 			continue
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", ev.Time.Format(time.RFC3339), ev.Kind, oneLine(ev.Summary))
+		author := ev.Author
+		if author == "" {
+			author = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", ev.Time.Format(time.RFC3339), ev.Kind, author, oneLine(ev.Summary))
 	}
 	return nil
 }
@@ -243,6 +308,20 @@ func filterKind(events []*event.Event, kind string) []*event.Event {
 		}
 	}
 	return out
+}
+
+func authorSuffix(a string) string {
+	if a == "" {
+		return ""
+	}
+	return " — " + a
+}
+
+func authorTag(a string) string {
+	if a == "" {
+		return ""
+	}
+	return " (" + a + ")"
 }
 
 func oneLine(s string) string {
@@ -271,4 +350,28 @@ func stripFrontmatter(s string) string {
 		return s
 	}
 	return strings.TrimLeft(rest[idx+5:], "\n")
+}
+
+// frontmatterField extracts a top-level scalar field from the YAML
+// frontmatter of s. Returns "" if absent or malformed. Tolerates
+// values with or without surrounding quotes.
+func frontmatterField(s, key string) string {
+	if !strings.HasPrefix(s, "---\n") {
+		return ""
+	}
+	rest := s[4:]
+	idx := strings.Index(rest, "\n---\n")
+	if idx < 0 {
+		return ""
+	}
+	for _, line := range strings.Split(rest[:idx], "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(k) != key {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		v = strings.Trim(v, `"'`)
+		return v
+	}
+	return ""
 }

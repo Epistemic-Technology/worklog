@@ -25,6 +25,11 @@ exec worklog capture-claude
 
 	defaultConfig = `project: %s
 
+# Attribution for notes and Claude sessions. If unset, worklog uses
+# your GitHub username (via the gh CLI) and falls back to your OS
+# user. Setting this here overrides both.
+# author: yourname
+
 git:
   skip_merges: true
   skip_authors: ["dependabot[bot]", "renovate[bot]"]
@@ -46,6 +51,10 @@ summarizer:
 
 reviews:
   auto_generate: false
+  # When true (default), generated reviews are written to
+  # .worklog/reviews/ and subsequent ` + "`worklog review`" + ` calls serve the
+  # cached file. Pass --regenerate to force a fresh summarizer pass.
+  persist: true
 `
 )
 

@@ -6,7 +6,10 @@ package config
 import (
 	"errors"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -37,10 +40,15 @@ type Summarizer struct {
 
 type Reviews struct {
 	AutoGenerate bool `yaml:"auto_generate"`
+	// Persist controls whether generated reviews are written to
+	// .worklog/reviews/ and whether subsequent runs read from that
+	// cache instead of regenerating. Default true.
+	Persist bool `yaml:"persist"`
 }
 
 type Config struct {
 	Project    string     `yaml:"project"`
+	Author     string     `yaml:"author,omitempty"`
 	Git        Git        `yaml:"git"`
 	ClaudeCode ClaudeCode `yaml:"claude_code"`
 	Agents     Agents     `yaml:"agents"`
@@ -63,6 +71,9 @@ func Default() Config {
 			Provider:  "anthropic",
 			Model:     "claude-haiku-4-5",
 			APIKeyEnv: "ANTHROPIC_API_KEY",
+		},
+		Reviews: Reviews{
+			Persist: true,
 		},
 	}
 }
@@ -110,4 +121,37 @@ func (s Summarizer) ResolveAPIKey() string {
 // WorklogDir returns the .worklog directory under root.
 func WorklogDir(root string) string {
 	return filepath.Join(root, ".worklog")
+}
+
+// ResolveAuthor returns the attribution to record on notes and
+// agent-session events. Precedence: explicit `author:` in config →
+// GitHub username (via `gh api user`, if installed and authed) →
+// OS user. Returns "" only if every source is empty, which would
+// be a very unusual environment.
+func (c Config) ResolveAuthor() string {
+	if s := strings.TrimSpace(c.Author); s != "" {
+		return s
+	}
+	if s := githubUser(); s != "" {
+		return s
+	}
+	return osUser()
+}
+
+func githubUser() string {
+	// --cache makes repeat calls near-instant. Errors (gh not
+	// installed, not authed, offline) fall through to the next source.
+	cmd := exec.Command("gh", "api", "user", "--cache", "24h", "--jq", ".login")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func osUser() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return u.Username
+	}
+	return os.Getenv("USER")
 }

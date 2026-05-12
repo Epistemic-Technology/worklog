@@ -219,6 +219,11 @@ func List(root string, from, to time.Time) ([]*Event, error) {
 	return out, nil
 }
 
+// IsMonthShard reports whether name is a YYYY-MM shard directory.
+func IsMonthShard(name string) bool {
+	return isMonthShard(name)
+}
+
 // isMonthShard reports whether name is a YYYY-MM shard directory.
 func isMonthShard(name string) bool {
 	if len(name) != 7 || name[4] != '-' {

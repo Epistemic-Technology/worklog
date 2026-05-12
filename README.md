@@ -112,20 +112,26 @@ worklog show --kind commit
 `--kind` filters by event kind (`commit`, `claude-session`, `note`,
 …).
 
-### `worklog review --month YYYY-MM | --year YYYY [--write]`
+### `worklog review --week YYYY-Www | --month YYYY-MM | --year YYYY [--regenerate]`
 
-Generate a clustered, LLM-summarized monthly or yearly review.
-Yearly reviews are composed from the twelve monthly reviews, not from
-raw events.
+Generate a clustered, LLM-summarized weekly, monthly, or yearly
+review. Yearly reviews are composed from the twelve monthly reviews,
+not from raw events; weekly and monthly reviews are built directly
+from events in their range.
 
 ```sh
-worklog review --month 2026-05            # print to stdout
-worklog review --month 2026-05 --write    # persist to .worklog/reviews/
-worklog review --year 2026 --write
+worklog review --week 2026-W19            # ISO week
+worklog review --month 2026-05
+worklog review --year 2026
+worklog review --month 2026-05 --regenerate   # bypass cache, re-run LLM
 ```
 
-The convention: someone (or a CI job) runs `--write` at month boundary
-and commits the result, so reviews are stable and diff-able in PRs.
+By default, reviews are persisted to `.worklog/reviews/<period>.md`
+and subsequent runs serve the cached file (this is configurable via
+`reviews.persist` in `.worklog/config.yml`). Pass `--regenerate` to
+overwrite the cached version with a fresh summarizer pass — useful
+after backfilling events into a past period. Commit the persisted
+reviews so they're stable and diff-able in PRs.
 
 ### `worklog resummarize`
 
@@ -136,6 +142,13 @@ after a slow batch where capture deferred summarization.
 ### `worklog ls [--kind KIND]`
 
 List raw event files. Mostly for debugging.
+
+### `worklog reset [--force]`
+
+Delete every captured event and persisted review, leaving `config.yml`,
+`bin/capture-session`, and `README.md` intact — i.e. the same state as
+just after `worklog init`. Prompts for confirmation; `--force` skips
+the prompt. After reset, run `worklog sync` to re-import history.
 
 ### `worklog capture-commit <sha>` and `worklog capture-claude`
 
@@ -155,6 +168,11 @@ Key fields:
 ```yaml
 project: webapp
 
+# Attribution for notes and Claude sessions. Optional — if omitted,
+# worklog uses your GitHub username (via `gh api user`), falling
+# back to your OS user. Setting this trumps both.
+author: alice
+
 git:
   skip_merges: true
   skip_authors: ["dependabot[bot]", "renovate[bot]"]
@@ -171,4 +189,5 @@ summarizer:
 
 reviews:
   auto_generate: false
+  persist: true             # write reviews to disk + serve cached on repeat
 ```

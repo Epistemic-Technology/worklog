@@ -172,6 +172,21 @@ func (c *Client) Session(ctx context.Context, firstPrompt, transcript string, fi
 	return
 }
 
+// WeeklyReview composes a weekly narrative from event one-liners.
+func (c *Client) WeeklyReview(ctx context.Context, period string, lines []string) string {
+	joined := strings.Join(lines, "\n")
+	if !c.Configured() {
+		return FallbackReview(period, lines)
+	}
+	sys := "You write weekly engineering retrospectives. Given a list of dated event one-liners, output GitHub-flavored markdown with a brief Summary section and a Highlights section that groups related events. Keep it terse — a week is short, so don't overreach for themes."
+	prompt := fmt.Sprintf("Week: %s\n\nEvents (one per line):\n%s", period, joined)
+	out, err := c.Complete(ctx, sys, prompt, 1500)
+	if err != nil || out == "" {
+		return FallbackReview(period, lines)
+	}
+	return out
+}
+
 // MonthlyReview composes a monthly narrative from event one-liners.
 func (c *Client) MonthlyReview(ctx context.Context, period string, lines []string) string {
 	joined := strings.Join(lines, "\n")
