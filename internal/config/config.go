@@ -1,6 +1,6 @@
-// Package config loads worklog configuration from the repo-committed
-// .worklog/config.yml and a user-level overlay at
-// ~/.config/worklog/config.yml.
+// Package config loads worklog configuration. The global config at
+// ~/.config/worklog/config.yml sets per-user defaults; the repo-committed
+// .worklog/config.yml overrides those defaults for a single project.
 package config
 
 import (
@@ -78,19 +78,21 @@ func Default() Config {
 	}
 }
 
-// Load reads .worklog/config.yml at root and merges any user overlay
-// at ~/.config/worklog/config.yml on top of it.
+// Load merges three layers in order: built-in defaults, the global
+// config at ~/.config/worklog/config.yml, and the repo-committed
+// .worklog/config.yml. Later layers override earlier ones, so the
+// repo config has final say.
 func Load(root string) (Config, error) {
 	cfg := Default()
+	if home, err := os.UserHomeDir(); err == nil {
+		global := filepath.Join(home, ".config", "worklog", "config.yml")
+		if err := mergeFromFile(&cfg, global); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return cfg, err
+		}
+	}
 	repoPath := filepath.Join(root, ".worklog", "config.yml")
 	if err := mergeFromFile(&cfg, repoPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return cfg, err
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		overlay := filepath.Join(home, ".config", "worklog", "config.yml")
-		if err := mergeFromFile(&cfg, overlay); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return cfg, err
-		}
 	}
 	return cfg, nil
 }

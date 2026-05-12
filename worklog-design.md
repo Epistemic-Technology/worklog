@@ -222,7 +222,7 @@ reviews:
   auto_generate: false       # if true, write monthly review at month end.
 ```
 
-A user-level overlay at `~/.config/worklog/config.yml` can override the API key path and any local preferences without polluting the committed config.
+A global config at `~/.config/worklog/config.yml` sets per-user defaults (API key path, summarizer model, attribution, etc.) that apply across every repo. The per-repo `.worklog/config.yml` overrides those defaults for that project. Built-in defaults fill in anything neither file specifies.
 
 ## Concurrency and merges
 

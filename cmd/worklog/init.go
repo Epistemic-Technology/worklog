@@ -23,38 +23,41 @@ exit 0
 exec worklog capture-claude
 `
 
-	defaultConfig = `project: %s
+	defaultConfig = `# Per-repo worklog config. Committed and shared with collaborators —
+# keep team-wide settings here. Per-user defaults (API key path,
+# preferred summarizer model, attribution) belong in
+# ~/.config/worklog/config.yml; anything set here overrides those
+# defaults for this project.
 
-# Attribution for notes and Claude sessions. If unset, worklog uses
-# your GitHub username (via the gh CLI) and falls back to your OS
-# user. Setting this here overrides both.
-# author: yourname
+project: %s
 
-git:
-  skip_merges: true
-  skip_authors: ["dependabot[bot]", "renovate[bot]"]
-  collapse_fixups: true
+# Uncomment any of the sections below to override the global defaults
+# for this project.
 
-claude_code:
-  enabled: true
-  store_transcripts: false
-
-agents:
-  cursor: false
-  aider: false
-  cline: false
-
-summarizer:
-  provider: anthropic
-  model: claude-haiku-4-5
-  api_key_env: ANTHROPIC_API_KEY
-
-reviews:
-  auto_generate: false
-  # When true (default), generated reviews are written to
-  # .worklog/reviews/ and subsequent ` + "`worklog review`" + ` calls serve the
-  # cached file. Pass --regenerate to force a fresh summarizer pass.
-  persist: true
+# author: yourname            # overrides gh login / OS user
+#
+# git:
+#   skip_merges: true
+#   skip_authors: ["dependabot[bot]", "renovate[bot]"]
+#   collapse_fixups: true
+#
+# claude_code:
+#   enabled: true
+#   store_transcripts: false
+#
+# agents:
+#   cursor: false
+#   aider: false
+#   cline: false
+#
+# summarizer:
+#   provider: anthropic
+#   model: claude-haiku-4-5
+#   api_key_env: ANTHROPIC_API_KEY
+#
+# reviews:
+#   auto_generate: false
+#   persist: true             # cache reviews to .worklog/reviews/
 `
 )
 
@@ -227,10 +230,18 @@ missing.
 ## API key
 
 LLM summaries call the Anthropic API. Set ` + "`ANTHROPIC_API_KEY`" + ` in your
-shell, or override via a user-level overlay at
+shell, or point worklog at a different env var globally via
 ` + "`~/.config/worklog/config.yml`" + `. Without a key, events are still captured
 using deterministic fallback summaries; run ` + "`worklog resummarize`" + `
 later to fill them in.
+
+## Configuration layers
+
+This file (` + "`.worklog/config.yml`" + `) is committed and shared with
+collaborators — keep team-wide settings here. Per-user defaults
+(API key path, preferred model, attribution) belong in
+` + "`~/.config/worklog/config.yml`" + `; this file overrides them for this
+project.
 `
 	return os.WriteFile(path, []byte(body), 0o644)
 }

@@ -67,7 +67,7 @@ deterministic fallback summaries (commit message for git, first user
 prompt plus files-touched for Claude sessions). Run
 `worklog resummarize` later to fill those in.
 
-The key path can be overridden in `~/.config/worklog/config.yml` if
+The key path can be set globally in `~/.config/worklog/config.yml` if
 you'd rather not put it in your shell environment.
 
 ## Commands
@@ -158,10 +158,13 @@ directly.
 
 ## Configuration
 
-Per-repo config lives at `.worklog/config.yml` (committed). A
-user-level overlay at `~/.config/worklog/config.yml` can override the
-API key path and any local preferences without polluting the
-committed config.
+worklog reads two files and merges them. The global config at
+`~/.config/worklog/config.yml` sets per-user defaults (your preferred
+summarizer model, API key path, attribution, etc.) that apply across
+every repo. The per-repo config at `.worklog/config.yml` (committed)
+overrides those defaults for a single project — use it for things the
+whole team should share, like the project name and any team-wide git
+filters. Built-in defaults fill in anything neither file specifies.
 
 Key fields:
 
