@@ -94,6 +94,40 @@ worklog note "Decided to drop the OAuth flow in favor of magic links."
 worklog note            # opens editor
 ```
 
+### `worklog entry <kind> [text]`
+
+Append an entry of an arbitrary kind. `kind` must be a lowercase slug
+(`[a-z0-9][a-z0-9-]*`) and appears in the event filename and
+frontmatter. With no `text`, opens `$EDITOR`.
+
+```sh
+worklog entry decision "Drop OAuth in favor of magic links."
+worklog entry incident          # opens editor
+worklog entry release --tags v1.2.0,prod --refs git:abc1234
+```
+
+Flags: `--summary`, `--tags`, `--refs`, `--thread`, `--session-id`,
+`--author`, `--time` (RFC3339).
+
+For scripted / agent-driven entries, pipe a JSON blob over stdin with
+`--json`:
+
+```sh
+echo '{
+  "kind": "decision",
+  "summary": "Drop OAuth in favor of magic links",
+  "tags": ["auth", "decision"],
+  "body": "Discussed in standup. Magic links keep us out of GDPR..."
+}' | worklog entry --json
+```
+
+JSON keys: `time`, `end_time`, `kind`, `author`, `refs`, `summary`,
+`tags`, `session_id`, `thread`, `body`. `kind` is required (or pass it
+positionally to override). Flag overrides win over JSON fields.
+
+`worklog note` is a shortcut for the common `kind: note` case and is
+left intact.
+
 ### `worklog show [flags]`
 
 Render a review to stdout. Defaults to `--week`.

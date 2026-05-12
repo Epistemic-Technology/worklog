@@ -42,6 +42,7 @@ func newRoot() *cobra.Command {
 		newCaptureCommitCmd(),
 		newCaptureClaudeCmd(),
 		newNoteCmd(),
+		newEntryCmd(),
 		newSyncCmd(),
 		newResummarizeCmd(),
 		newShowCmd(),
@@ -176,6 +177,107 @@ func newNoteCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newEntryCmd() *cobra.Command {
+	var (
+		jsonMode  bool
+		summary   string
+		tags      []string
+		refs      []string
+		thread    string
+		sessionID string
+		author    string
+		when      string
+	)
+	cmd := &cobra.Command{
+		Use:   "entry <kind> [text...]",
+		Short: "Add an event of any kind",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root, err := repoRoot()
+			if err != nil {
+				return err
+			}
+			cfg, err := config.Load(root)
+			if err != nil {
+				return err
+			}
+
+			var in capture.EntryInput
+			if jsonMode {
+				raw, err := io.ReadAll(os.Stdin)
+				if err != nil {
+					return err
+				}
+				if err := json.Unmarshal(raw, &in); err != nil {
+					return fmt.Errorf("parsing json: %w", err)
+				}
+				// Positional kind, if given, overrides any kind in JSON.
+				if len(args) > 0 {
+					in.Kind = args[0]
+				}
+			} else {
+				if len(args) == 0 {
+					return errors.New("entry: kind is required (e.g. `worklog entry decision \"...\"`)")
+				}
+				in.Kind = args[0]
+				if len(args) > 1 {
+					in.Body = strings.Join(args[1:], " ")
+				} else {
+					text, err := openEditor(root)
+					if err != nil {
+						return err
+					}
+					if strings.TrimSpace(text) == "" {
+						return errors.New("entry body is empty; aborting")
+					}
+					in.Body = text
+				}
+			}
+
+			if summary != "" {
+				in.Summary = summary
+			}
+			if len(tags) > 0 {
+				in.Tags = tags
+			}
+			if len(refs) > 0 {
+				in.Refs = refs
+			}
+			if thread != "" {
+				in.Thread = thread
+			}
+			if sessionID != "" {
+				in.SessionID = sessionID
+			}
+			if author != "" {
+				in.Author = author
+			}
+			if when != "" {
+				t, err := time.Parse(time.RFC3339, when)
+				if err != nil {
+					return fmt.Errorf("--time must be RFC3339: %w", err)
+				}
+				in.Time = &t
+			}
+
+			path, err := capture.Entry(root, in, cfg.ResolveAuthor())
+			if err != nil {
+				return err
+			}
+			fmt.Println(path)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonMode, "json", false, "read JSON {kind, summary, body, ...} from stdin")
+	cmd.Flags().StringVar(&summary, "summary", "", "override summary")
+	cmd.Flags().StringSliceVar(&tags, "tags", nil, "comma-separated tags")
+	cmd.Flags().StringSliceVar(&refs, "refs", nil, "comma-separated refs")
+	cmd.Flags().StringVar(&thread, "thread", "", "thread name")
+	cmd.Flags().StringVar(&sessionID, "session-id", "", "session id")
+	cmd.Flags().StringVar(&author, "author", "", "override author")
+	cmd.Flags().StringVar(&when, "time", "", "override event time (RFC3339)")
+	return cmd
 }
 
 func newSyncCmd() *cobra.Command {
