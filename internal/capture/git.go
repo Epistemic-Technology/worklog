@@ -24,8 +24,14 @@ type CommitInfo struct {
 	Subject    string
 	Body       string
 	Diffstat   string
+	Paths      []string
 	IsMerge    bool
 }
+
+// worklogPathPrefix marks files in worklog's own directory. We exclude
+// these from both the empty-commit check and the captured diffstat so
+// commits that only touch .worklog/ don't produce near-empty entries.
+const worklogPathPrefix = ".worklog/"
 
 // GitCommit reads a single commit by SHA and returns its event-relevant fields.
 func GitCommit(ctx context.Context, repo, sha string) (CommitInfo, error) {
@@ -55,9 +61,19 @@ func GitCommit(ctx context.Context, repo, sha string) (CommitInfo, error) {
 	info.Subject = strings.TrimSpace(lines[5])
 	info.Body = strings.TrimRight(lines[6], "\n")
 
-	stat, err := runGit(ctx, repo, "show", "--stat", "--format=", sha)
+	// --stat=1000 keeps full paths so we can match `.worklog/` reliably;
+	// the default width truncates with leading "...".
+	stat, err := runGit(ctx, repo, "show", "--stat=1000", "--format=", sha)
 	if err == nil {
 		info.Diffstat = strings.TrimSpace(string(stat))
+	}
+	names, err := runGit(ctx, repo, "show", "--name-only", "--format=", sha)
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(names)), "\n") {
+			if p := strings.TrimSpace(line); p != "" {
+				info.Paths = append(info.Paths, p)
+			}
+		}
 	}
 	return info, nil
 }
@@ -76,6 +92,9 @@ func CaptureCommit(ctx context.Context, root string, cfg config.Config, sum *sum
 	if matchesAuthor(info.AuthorName, info.AuthorEmail, cfg.Git.SkipAuthors) {
 		return "", nil
 	}
+	if onlyWorklogPaths(info.Paths) {
+		return "", nil
+	}
 	short := info.SHA
 	if len(short) > 7 {
 		short = short[:7]
@@ -88,7 +107,7 @@ func CaptureCommit(ctx context.Context, root string, cfg config.Config, sum *sum
 	if message == "" {
 		message = info.Subject
 	}
-	summary, body := sum.Commit(ctx, message, info.Diffstat)
+	summary, body := sum.Commit(ctx, message, filterWorklogDiffstat(info.Diffstat))
 	if summary == "" {
 		summary = summarize.PendingMarker
 	}
@@ -147,6 +166,47 @@ func runGit(ctx context.Context, repo string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("git %s: %w (stderr=%s)", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
+}
+
+// onlyWorklogPaths reports whether every changed path lives under
+// .worklog/. Such commits are worklog's own bookkeeping and would
+// otherwise produce empty event entries.
+func onlyWorklogPaths(paths []string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	for _, p := range paths {
+		if !strings.HasPrefix(p, worklogPathPrefix) {
+			return false
+		}
+	}
+	return true
+}
+
+// filterWorklogDiffstat drops per-file lines under .worklog/ from a
+// `git show --stat` block. If anything was filtered, the trailing
+// "N files changed, ..." summary line is dropped too since the counts
+// no longer match.
+func filterWorklogDiffstat(stat string) string {
+	if stat == "" {
+		return stat
+	}
+	var out []string
+	filtered := false
+	for _, line := range strings.Split(stat, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), worklogPathPrefix) {
+			filtered = true
+			continue
+		}
+		out = append(out, line)
+	}
+	if filtered && len(out) > 0 {
+		last := strings.TrimSpace(out[len(out)-1])
+		if strings.Contains(last, "file changed") || strings.Contains(last, "files changed") {
+			out = out[:len(out)-1]
+		}
+	}
+	return strings.TrimRight(strings.Join(out, "\n"), "\n")
 }
 
 func matchesAuthor(name, email string, skip []string) bool {
