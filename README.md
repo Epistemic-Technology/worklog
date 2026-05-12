@@ -11,8 +11,8 @@ See [`worklog-design.md`](worklog-design.md) for the full design.
 ## Getting started
 
 ```sh
-# 1. Build and install the binary
-go install ./cmd/worklog
+# 1. Install the binary
+go install github.com/mikethicke/worklog/cmd/worklog@latest
 
 # 2. From inside a git repo:
 worklog init                    # creates .worklog/, installs hooks
@@ -30,13 +30,20 @@ session that ends in this repo will be captured into `.worklog/`. Run
 Requires Go 1.26+.
 
 ```sh
+go install github.com/mikethicke/worklog/cmd/worklog@latest
+```
+
+This drops a single static binary at `$(go env GOPATH)/bin/worklog`
+(typically `~/go/bin`). Make sure that directory is on your `$PATH`.
+
+Pin to a specific version with `@v0.2.0` or track a branch with
+`@main`. To install from a local clone instead:
+
+```sh
 git clone https://github.com/mikethicke/worklog
 cd worklog
 go install ./cmd/worklog
 ```
-
-This drops a single static binary at `$(go env GOPATH)/bin/worklog`.
-Make sure that directory is on your `$PATH`.
 
 Then, in each repo where you want a worklog:
 
