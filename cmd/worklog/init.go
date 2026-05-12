@@ -66,9 +66,14 @@ project: %s
 #   cline: false
 #
 # summarizer:
-#   provider: anthropic
+#   provider: anthropic          # anthropic | openai | gemini
 #   model: claude-haiku-4-5
+#   # API key resolution: api_key (in config) > api_key_env > the
+#   # provider's default env var (ANTHROPIC_API_KEY / OPENAI_API_KEY /
+#   # GEMINI_API_KEY). Prefer api_key_env or the default env var so
+#   # secrets stay out of committed config.
 #   api_key_env: ANTHROPIC_API_KEY
+#   # api_key: sk-...            # only if you must inline it
 #
 # reviews:
 #   auto_generate: false
@@ -92,7 +97,7 @@ func runInit(root string) error {
 	}
 	fmt.Println("worklog initialized in", config.WorklogDir(root))
 	fmt.Println("Next steps:")
-	fmt.Println("  - Set ANTHROPIC_API_KEY to enable LLM summaries")
+	fmt.Println("  - Set ANTHROPIC_API_KEY (or configure another summarizer provider) to enable LLM summaries")
 	fmt.Println("  - Run `worklog sync` to import existing git history")
 	fmt.Println("  - The Claude Code SessionEnd hook will prompt for approval on next session")
 	return nil

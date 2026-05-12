@@ -1,18 +1,19 @@
 // Package summarize turns a transcript or diff into a short summary
-// by calling the Anthropic API. If no API key is configured, callers
-// fall back to deterministic non-LLM summaries via Fallback*.
+// by calling a configured LLM provider. If no provider is configured,
+// callers fall back to deterministic non-LLM summaries via Fallback*.
+//
+// Providers live in their own files (anthropic.go, openai.go,
+// gemini.go) and each implements the Completer interface. The Client
+// type wraps a Completer and exposes the higher-level summarization
+// methods (Commit, Session, WeeklyReview, ...) used by the rest of the
+// codebase — those methods are provider-agnostic.
 package summarize
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
-	"time"
 )
 
 // PendingMarker is the summary placeholder written when an eager
@@ -22,104 +23,62 @@ const PendingMarker = "pending"
 // ErrNoKey indicates the summarizer is not configured.
 var ErrNoKey = errors.New("summarize: no API key configured")
 
-// Client is a tiny Anthropic Messages API client. Zero value is not
-// usable — use New.
-type Client struct {
-	APIKey string
-	Model  string
-	HTTP   *http.Client
-	URL    string
+// Completer is the minimal surface area each LLM provider must
+// implement. A single-turn completion with a system prompt is enough
+// for everything worklog summarizes.
+type Completer interface {
+	Complete(ctx context.Context, system, user string, maxTokens int) (string, error)
 }
 
-func New(apiKey, model string) *Client {
-	return &Client{
-		APIKey: apiKey,
-		Model:  model,
-		HTTP:   &http.Client{Timeout: 60 * time.Second},
-		URL:    "https://api.anthropic.com/v1/messages",
+// Client is provider-agnostic. It holds a Completer (which may be nil
+// when no provider is configured) and exposes the higher-level
+// summarization methods. Zero value is unconfigured; use New.
+type Client struct {
+	completer Completer
+}
+
+// New builds a Client for the given provider. An empty provider
+// defaults to "anthropic" for backwards compatibility. If apiKey or
+// model is empty, or the provider name is unknown, the returned Client
+// is unconfigured and callers will receive ErrNoKey from Complete; the
+// high-level methods fall back to deterministic summaries.
+func New(provider, apiKey, model string) *Client {
+	c, err := newCompleter(provider, apiKey, model)
+	if err != nil || c == nil {
+		return &Client{}
+	}
+	return &Client{completer: c}
+}
+
+func newCompleter(provider, apiKey, model string) (Completer, error) {
+	if apiKey == "" || model == "" {
+		return nil, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "", "anthropic", "claude":
+		return newAnthropic(apiKey, model), nil
+	case "openai":
+		return newOpenAI(apiKey, model), nil
+	case "gemini", "google":
+		return newGemini(apiKey, model), nil
+	default:
+		return nil, fmt.Errorf("summarize: unknown provider %q", provider)
 	}
 }
 
-// Configured reports whether the client has the bits it needs to
-// actually call out. Callers should switch to Fallback* if not.
+// Configured reports whether the client can actually call an LLM.
+// Callers should switch to Fallback* if not.
 func (c *Client) Configured() bool {
-	return c != nil && c.APIKey != "" && c.Model != ""
+	return c != nil && c.completer != nil
 }
 
-type message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type request struct {
-	Model     string    `json:"model"`
-	MaxTokens int       `json:"max_tokens"`
-	System    string    `json:"system,omitempty"`
-	Messages  []message `json:"messages"`
-}
-
-type responseBody struct {
-	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
-	Error *struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
-}
-
-// Complete sends a single-turn request to the Anthropic API and
-// returns the assistant text. Errors are returned verbatim; callers
-// decide whether to fall back.
+// Complete dispatches a single-turn completion to the underlying
+// provider. Returns ErrNoKey when no provider is configured.
 func (c *Client) Complete(ctx context.Context, system, user string, maxTokens int) (string, error) {
 	if !c.Configured() {
 		return "", ErrNoKey
 	}
-	reqBody := request{
-		Model:     c.Model,
-		MaxTokens: maxTokens,
-		System:    system,
-		Messages:  []message{{Role: "user", Content: user}},
-	}
-	b, err := json.Marshal(&reqBody)
-	if err != nil {
-		return "", err
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(b))
-	if err != nil {
-		return "", err
-	}
-	httpReq.Header.Set("content-type", "application/json")
-	httpReq.Header.Set("x-api-key", c.APIKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := c.HTTP.Do(httpReq)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	var parsed responseBody
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", fmt.Errorf("summarize: parse: %w (body=%s)", err, truncate(string(raw), 500))
-	}
-	if resp.StatusCode != http.StatusOK {
-		if parsed.Error != nil {
-			return "", fmt.Errorf("summarize: %s: %s", parsed.Error.Type, parsed.Error.Message)
-		}
-		return "", fmt.Errorf("summarize: http %d: %s", resp.StatusCode, truncate(string(raw), 500))
-	}
-	var out strings.Builder
-	for _, blk := range parsed.Content {
-		if blk.Type == "text" {
-			out.WriteString(blk.Text)
-		}
-	}
-	return strings.TrimSpace(out.String()), nil
+	return c.completer.Complete(ctx, system, user, maxTokens)
 }
 
 const summaryMaxChars = 200

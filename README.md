@@ -66,16 +66,20 @@ collaborators get the same capture behavior. On their first Claude
 Code session after pulling, **Claude Code will prompt them to approve
 the new hook** — this is expected.
 
-### Anthropic API key
+### Summarizer API key
 
-LLM summaries call the Anthropic API. Set `ANTHROPIC_API_KEY` in your
+LLM summaries call a configured provider — Anthropic by default,
+OpenAI or Gemini optionally (see [Summarizer providers](#summarizer-providers)
+below). For the default provider, set `ANTHROPIC_API_KEY` in your
 shell. Without a key, capture still works — events are written with
 deterministic fallback summaries (commit message for git, first user
 prompt plus files-touched for Claude sessions). Run
 `worklog resummarize` later to fill those in.
 
-The key path can be set globally in `~/.config/worklog/config.yml` if
-you'd rather not put it in your shell environment.
+The key can also live in `~/.config/worklog/config.yml`, either as a
+custom env var name (`summarizer.api_key_env`) or — if you must —
+inline (`summarizer.api_key`). Prefer the env var form so the key
+never lands in a committed file.
 
 ## Commands
 
@@ -236,7 +240,7 @@ claude_code:
   store_transcripts: false
 
 summarizer:
-  provider: anthropic
+  provider: anthropic         # anthropic | openai | gemini
   model: claude-haiku-4-5
   api_key_env: ANTHROPIC_API_KEY
 
@@ -244,3 +248,18 @@ reviews:
   auto_generate: false
   persist: true             # write reviews to disk + serve cached on repeat
 ```
+
+### Summarizer providers
+
+`summarizer.provider` selects the LLM backend. Three are built in:
+
+| Provider    | Example `model`        | Default env var                     |
+| ----------- | ---------------------- | ----------------------------------- |
+| `anthropic` | `claude-haiku-4-5`     | `ANTHROPIC_API_KEY`                 |
+| `openai`    | `gpt-5-mini`           | `OPENAI_API_KEY`                    |
+| `gemini`    | `gemini-2.5-flash`     | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
+
+API key resolution order: `summarizer.api_key` (inline in config) →
+the env var named by `summarizer.api_key_env` → the provider's default
+env var from the table above. Unrecognized providers fall back to
+deterministic non-LLM summaries.

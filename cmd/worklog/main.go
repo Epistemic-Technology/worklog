@@ -73,7 +73,7 @@ func loadCtx() (context.Context, string, config.Config, *summarize.Client, error
 	if err != nil {
 		return ctx, root, cfg, nil, err
 	}
-	sum := summarize.New(cfg.Summarizer.ResolveAPIKey(), cfg.Summarizer.Model)
+	sum := summarize.New(cfg.Summarizer.Provider, cfg.Summarizer.ResolveAPIKey(), cfg.Summarizer.Model)
 	return ctx, root, cfg, sum, nil
 }
 

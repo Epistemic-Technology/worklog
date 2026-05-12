@@ -112,8 +112,9 @@ func mergeFromFile(cfg *Config, path string) error {
 }
 
 // ResolveAPIKey returns the summarizer API key, preferring the
-// explicit APIKey field, then the env var named by APIKeyEnv,
-// then ANTHROPIC_API_KEY as a final fallback.
+// explicit APIKey field (set in config.yml), then the env var named by
+// APIKeyEnv, then a provider-specific default env var
+// (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY / GOOGLE_API_KEY).
 func (s Summarizer) ResolveAPIKey() string {
 	if s.APIKey != "" {
 		return s.APIKey
@@ -123,7 +124,25 @@ func (s Summarizer) ResolveAPIKey() string {
 			return v
 		}
 	}
-	return os.Getenv("ANTHROPIC_API_KEY")
+	for _, name := range defaultAPIKeyEnvs(s.Provider) {
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func defaultAPIKeyEnvs(provider string) []string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return []string{"OPENAI_API_KEY"}
+	case "gemini", "google":
+		return []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}
+	case "", "anthropic", "claude":
+		return []string{"ANTHROPIC_API_KEY"}
+	default:
+		return nil
+	}
 }
 
 // WorklogDir returns the .worklog directory under root.
